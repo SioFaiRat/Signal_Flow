@@ -474,9 +474,11 @@ class MainWindow(QWidget):
             self._log("[AI] Формирование запроса к Ollama...")
 
             prompt = (
-                f"Classify signal: {message}. "
-                f"Output ONLY valid JSON: "
-                f'{{"classification":"NORMAL|EMERGENCY","priority":5,"response":"OK: processed"}}'
+                f"You are a signal classifier. Input: '{message}'. "
+                f"Task: Return ONLY a valid JSON object with NO markdown, NO explanations, NO extra text. "
+                f"Required format: {{\"classification\":\"NORMAL\",\"priority\":1,\"response\":\"PROCESSED: {message}\"}}. "
+                f"Rules: 1) classification must be NORMAL or EMERGENCY. 2) priority is integer 1-5. 3) response is short confirmation. "
+                f"Output ONLY the JSON string starting with {{ and ending with }}."
             )
             
             payload = {
