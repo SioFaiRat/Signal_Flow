@@ -7,6 +7,8 @@ import json
 import subprocess
 import requests
 from pathlib import Path
+from datetime import datetime
+from typing import Optional
     
 
 if sys.platform == "win32": # Принудительно устанавливаем UTF-8 для консоли Windows
@@ -41,6 +43,92 @@ except ImportError:
         error_occurred = Signal()
         process_started = Signal()
         process_stopped = Signal()
+
+class TestTCPServer:
+    """Встроенный тестовый TCP сервер для приема данных"""
+    
+    def __init__(self, host: str = "127.0.0.1", port: int = 9998):
+        self.host = host
+        self.port = port
+        self._socket: Optional[socket.socket] = None
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._message_count = 0
+        self._last_message: str = ""
+        self._last_time: str = ""
+        
+    def start(self) -> bool:
+        """Запуск сервера"""
+        try:
+            self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._socket.bind((self.host, self.port))
+            self._socket.listen(5)
+            self._running = True
+            
+            self._thread = threading.Thread(target=self._accept_connections, daemon=True)
+            self._thread.start()
+            
+            print(f"[+] Test Server started on {self.host}:{self.port}")
+            return True
+        except Exception as e:
+            print(f"[!] Test Server start error: {e}")
+            return False
+    
+    def _accept_connections(self):
+        """Прием подключений"""
+        while self._running and self._socket:
+            try:
+                conn, addr = self._socket.accept()
+                thread = threading.Thread(target=self._handle_client, args=(conn, addr), daemon=True)
+                thread.start()
+            except OSError:
+                break
+    
+    def _handle_client(self, conn: socket.socket, addr: tuple):
+        """Обработка клиента"""
+        with conn:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Connected: {addr[0]}:{addr[1]}")
+            try:
+                data = conn.recv(4096)
+                if data:
+                    message = data.decode('utf-8', errors='replace').strip()
+                    self._message_count += 1
+                    self._last_message = message
+                    self._last_time = datetime.now().strftime('%H:%M:%S')
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Received ({self._message_count}): {message}")
+                    
+                    response = f"OK: Received {self._message_count} messages"
+                    conn.send(response.encode('utf-8'))
+            except Exception as e:
+                print(f"[!] Client error: {e}")
+    
+    def stop(self):
+        """Остановка сервера"""
+        self._running = False
+        if self._socket:
+            try:
+                self._socket.close()
+            except Exception:
+                pass
+            self._socket = None
+    
+    @property
+    def message_count(self) -> int:
+        return self._message_count
+    
+    @property
+    def last_message(self) -> str:
+        return self._last_message
+    
+    @property
+    def last_time(self) -> str:
+        return self._last_time
+    
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
 
 class OllamaMonitor(QObject):
     """Монитор состояния Ollama"""
@@ -242,6 +330,7 @@ class MainWindow(QWidget):
         self.tr = Translator(self.config.get("ui", "default_language", default="ru"))
         self.process_mgr = ProcessManager()
         self.ollama_monitor = OllamaMonitor()
+        self.test_server = TestTCPServer(host="127.0.0.1", port=9998)  # Встроенный тестовый сервер
         self.debug_window: DebugWindow | None = None
         self._setup_ui()
         self._connect_signals()
@@ -270,6 +359,15 @@ class MainWindow(QWidget):
         self.ollama_status_label.setFont(QFont("Segoe UI", 10))
         top_bar.addWidget(self.ollama_btn)
         top_bar.addWidget(self.ollama_status_label)
+        
+        # Кнопка запуска тестового сервера
+        self.test_server_btn = QPushButton("🖥️ Тестовый сервер")
+        self.test_server_btn.setCheckable(True)
+        self.test_server_btn.clicked.connect(self._toggle_test_server)
+        self.test_server_status = QLabel("⚪ Сервер: Выключен")
+        self.test_server_status.setFont(QFont("Segoe UI", 10))
+        top_bar.addWidget(self.test_server_btn)
+        top_bar.addWidget(self.test_server_status)
         
         # Кнопка отладки
         self.debug_btn = QPushButton("🔍 Дебаг")
@@ -396,6 +494,26 @@ class MainWindow(QWidget):
             self.ollama_status_label.setStyleSheet("color: #F44336;")
             self.ollama_btn.setText("🦙 Запуск Ollama")
 
+    def _toggle_test_server(self):
+        """Переключение состояния тестового сервера"""
+        if self.test_server_btn.isChecked():
+            if self.test_server.start():
+                self.test_server_status.setText(f"🟢 Сервер: 127.0.0.1:9998")
+                self.test_server_status.setStyleSheet("color: #4CAF50;")
+                self.test_server_btn.setText("🛑 Остановить сервер")
+                self._log("[TestServer] Запущен на 127.0.0.1:9998")
+            else:
+                self.test_server_btn.setChecked(False)
+                self.test_server_status.setText("🔴 Сервер: Ошибка запуска")
+                self.test_server_status.setStyleSheet("color: #F44336;")
+                self._log("[TestServer ERROR] Не удалось запустить")
+        else:
+            self.test_server.stop()
+            self.test_server_status.setText("⚪ Сервер: Выключен")
+            self.test_server_status.setStyleSheet("")
+            self.test_server_btn.setText("🖥️ Тестовый сервер")
+            self._log("[TestServer] Остановлен")
+
     def _open_debug_window(self):
         """Открытие окна отладки"""
         if self.debug_window is None or not self.debug_window.isVisible():
@@ -412,15 +530,23 @@ class MainWindow(QWidget):
             return
 
         btn.setEnabled(False)
-        ip = self.config.get("network", "simulator_host", default="127.0.0.1")
-        port = int(self.config.get("network", "simulator_port", default=9999))
+        
+        # Если тестовый сервер запущен - используем его порт 9998, иначе порт из конфига (9999)
+        if self.test_server_btn.isChecked() and self.test_server.is_running:
+            ip = "127.0.0.1"
+            port = 9998
+            self._log(f"[TestServer] Отправка на встроенный сервер {ip}:{port}...")
+        else:
+            ip = self.config.get("network", "simulator_host", default="127.0.0.1")
+            port = int(self.config.get("network", "simulator_port", default=9999))
+            self._log(f"[External] Отправка на внешний сервер {ip}:{port}...")
 
         if use_ai:
             self._log(f"[AI] Подготовка через ИИ-модуль...")
             self._update_node("node_sender", "active", "В очереди ИИ...")
             threading.Thread(target=self._ai_send_worker, args=(ip, port, message, btn), daemon=True).start()
         else:
-            self._log(f"[DIRECT] Прямая отправка на {ip}:{port}...")
+            self._log(f"[DIRECT] Прямая отправка...")
             self._update_node("node_sender", "active", "Отправка...")
             threading.Thread(target=self._direct_send_worker, args=(ip, port, message, btn), daemon=True).start()
 
