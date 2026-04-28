@@ -1,1 +1,8 @@
-Nothing needs to be added to .gitignore since the changes only include source code files (.py) and a style sheet (.qss), which should not be ignored.
+```
+# Compiled Python files
+*.pyc
+__pycache__/
+
+# Original rule preserved
+*.log
+```
