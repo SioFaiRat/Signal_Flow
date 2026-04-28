@@ -534,7 +534,8 @@ class MainWindow(QWidget):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(5)
                 s.connect((ip, port))
-                s.sendall(processed_msg.encode('utf-8'))
+                # Добавляем \n для консистентности с direct_send_worker
+                s.sendall((processed_msg + "\n").encode('utf-8'))
                 
                 resp_data = b""
                 while True:

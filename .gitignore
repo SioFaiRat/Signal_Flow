@@ -1,39 +1,21 @@
 ```
-# Compiled Python files
-*.pyc
+# Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# Virtual environments
-venv/
-.venv/
-.env
-*.env
-
-# Logs
+# Logs and temp files
 *.log
+*.tmp
+*.swp
 
-# IDE/Editor files
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
 .vscode/
 .idea/
-*.swp
-*.swo
-*.tmp
-
-# Build/dist directories
-build/
-dist/
-target/
-
-# Coverage reports
-.coverage
-coverage/
-htmlcov/
-
-# Python cache
-.pytest_cache/
-.mypy_cache/
-
-# System files
-.DS_Store
-Thumbs.db
 ```
