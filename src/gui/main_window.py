@@ -508,13 +508,19 @@ class MainWindow(QWidget):
                 raw = raw.split("```")[-2] if raw.count("```") >= 2 else raw.replace("```", "")
             raw = raw.strip()
 
+            # DEBUG: Вывод сырого ответа для анализа проблемы
+            self._log(f"[DEBUG] RAW AI RESPONSE: {repr(raw)}")
+
             try:
                 analysis = json.loads(raw)
+                self._log(f"[AI] JSON успешно распарсен: {analysis}")
                 processed_msg = analysis.get("response", f"AI_OK: {message}")
             except json.JSONDecodeError as je:
                 print(f"[DEBUG AI] JSON парсинг упал: {je}")
+                self._log(f"[AI WARN] JSON не распарсен: {je}")
+                self._log(f"[AI WARN] Содержимое: {raw[:200]}...")
                 processed_msg = f"AI_FALLBACK: {message}"
-                self._log("[AI WARN] JSON не распарсен, использован fallback")
+                self._log("[AI WARN] Использован fallback режим")
 
             self._log(f"[AI] Отправка на сервер: {processed_msg[:40]}...")
             
