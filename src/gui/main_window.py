@@ -743,16 +743,21 @@ class MainWindow(QWidget):
                     local_log("⚠️ Сервер не прислал ответа, но данные отправлены.")
                     resp_text = "Sent (no response)"
 
+            # Разблокируем кнопку ПЕРЕД вызовом успеха
+            QTimer.singleShot(0, lambda: btn.setEnabled(True))
             QTimer.singleShot(0, lambda: self._on_send_success(resp_text, btn, is_direct=True))
             
         except socket.timeout:
             local_log("❌ Ошибка: Таймаут соединения/чтения.")
+            QTimer.singleShot(0, lambda: btn.setEnabled(True))
             QTimer.singleShot(0, lambda: self._on_send_error("Таймаут (сервер молчит)", btn))
         except ConnectionRefusedError:
             local_log(f"❌ Ошибка: Сервер {ip}:{port} отклонил подключение.")
+            QTimer.singleShot(0, lambda: btn.setEnabled(True))
             QTimer.singleShot(0, lambda: self._on_send_error(f"Сервер {ip}:{port} недоступен", btn))
         except Exception as e:
             local_log(f"❌ Критическая ошибка: {type(e).__name__}: {e}")
+            QTimer.singleShot(0, lambda: btn.setEnabled(True))
             QTimer.singleShot(0, lambda: self._on_send_error(str(e), btn))
 
     def _ai_send_worker(self, ip, port, message, btn):
@@ -854,20 +859,22 @@ class MainWindow(QWidget):
 
             final_resp = resp_data.decode('utf-8', errors='replace').strip() if resp_data else "Sent (no response)"
             print(f"[DEBUG AI] Успех. Ответ сервера: {final_resp}")
+            # Разблокируем кнопку ПЕРЕД вызовом успеха, чтобы избежать дублирования
+            QTimer.singleShot(0, lambda: btn.setEnabled(True))
             QTimer.singleShot(0, lambda: self._on_send_success(final_resp, btn, is_direct=False))
 
         except requests.exceptions.ConnectionError as ce:
             print(f"[DEBUG AI] ConnectionError: {ce}")
+            QTimer.singleShot(0, lambda: btn.setEnabled(True))
             QTimer.singleShot(0, lambda: self._on_send_error("Ollama API недоступен. Запущен ли ollama serve?", btn))
         except requests.exceptions.Timeout as te:
             print(f"[DEBUG AI] Timeout: {te}")
+            QTimer.singleShot(0, lambda: btn.setEnabled(True))
             QTimer.singleShot(0, lambda: self._on_send_error("Таймаут Ollama (60с). Модель слишком долго грузится в RAM.", btn))
         except Exception as e:
             print(f"[DEBUG AI] Неизвестная ошибка:\n{traceback.format_exc()}")
-            QTimer.singleShot(0, lambda: self._on_send_error(f"AI-поток: {e}", btn))
-        finally:
-            # Гарантированно разблокируем кнопку и сбрасываем статус, если что-то пошло не так
             QTimer.singleShot(0, lambda: btn.setEnabled(True))
+            QTimer.singleShot(0, lambda: self._on_send_error(f"AI-поток: {e}", btn))
 
     def _on_send_success(self, response, btn, is_direct: bool):
         mode = "DIRECT" if is_direct else "AI"
@@ -877,7 +884,11 @@ class MainWindow(QWidget):
         self.delivery_status.setText(f"✅ Доставка успешна ({mode})")
         self.delivery_status.setProperty("class", "status-ok")
         self._refresh_style(self.delivery_status)
-        btn.setEnabled(True)
+        # Кнопка уже разблокирована в worker'е, здесь только для подстраховки
+        try:
+            btn.setEnabled(True)
+        except RuntimeError:
+            pass  # Кнопка могла быть уничтожена
         QTimer.singleShot(3000, self._reset_nodes)
 
     def _on_send_error(self, error, btn):
@@ -887,7 +898,11 @@ class MainWindow(QWidget):
         self.delivery_status.setText("❌ Ошибка соединения")
         self.delivery_status.setProperty("class", "status-error")
         self._refresh_style(self.delivery_status)
-        btn.setEnabled(True)
+        # Кнопка уже разблокирована в worker'е, здесь только для подстраховки
+        try:
+            btn.setEnabled(True)
+        except RuntimeError:
+            pass  # Кнопка могла быть уничтожена
         QTimer.singleShot(3000, self._reset_nodes)
 
     def _reset_nodes(self):
