@@ -766,6 +766,14 @@ class MainWindow(QWidget):
         import json
         import traceback
 
+        def unlock_button():
+            """Безопасная разблокировка кнопки"""
+            try:
+                if btn is not None:
+                    btn.setEnabled(True)
+            except (RuntimeError, AttributeError):
+                pass  # Кнопка могла быть уничтожена
+        
         try:
             print("[DEBUG AI] Запуск worker...")
             self._update_node("node_ai", "active", "Инициализация модели...")
@@ -830,50 +838,56 @@ class MainWindow(QWidget):
             self._log(f"[AI] Отправка на сервер: {processed_msg[:40]}...")
             
             # === ОТПРАВКА НА СЕРВЕР - УЛУЧШЕННАЯ ВЕРСИЯ ===
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(10.0)
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-                
-                self._log(f"[AI] Подключение к {ip}:{port}...")
-                s.connect((ip, port))
-                self._log(f"[AI] ✅ Соединение установлено")
-                
-                data_to_send = (processed_msg + "\n").encode('utf-8')
-                self._log(f"[AI] Отправка {len(data_to_send)} байт...")
-                s.sendall(data_to_send)
-                self._log(f"[AI] ✅ Данные отправлены")
-                
-                # Читаем ответ порциями
-                resp_data = b""
-                s.settimeout(5.0)
-                while True:
-                    try:
-                        chunk = s.recv(4096)
-                        if not chunk:
+            server_response = "Sent (no response)"
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(10.0)
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                    
+                    self._log(f"[AI] Подключение к {ip}:{port}...")
+                    s.connect((ip, port))
+                    self._log(f"[AI] ✅ Соединение установлено")
+                    
+                    data_to_send = (processed_msg + "\n").encode('utf-8')
+                    self._log(f"[AI] Отправка {len(data_to_send)} байт...")
+                    s.sendall(data_to_send)
+                    self._log(f"[AI] ✅ Данные отправлены")
+                    
+                    # Читаем ответ порциями
+                    resp_data = b""
+                    s.settimeout(5.0)
+                    while True:
+                        try:
+                            chunk = s.recv(4096)
+                            if not chunk:
+                                break
+                            resp_data += chunk
+                            if len(chunk) < 4096:
+                                break
+                        except socket.timeout:
                             break
-                        resp_data += chunk
-                        if len(chunk) < 4096:
-                            break
-                    except socket.timeout:
-                        break
 
-            final_resp = resp_data.decode('utf-8', errors='replace').strip() if resp_data else "Sent (no response)"
-            print(f"[DEBUG AI] Успех. Ответ сервера: {final_resp}")
-            # Разблокируем кнопку ПЕРЕД вызовом успеха, чтобы избежать дублирования
-            QTimer.singleShot(0, lambda: btn.setEnabled(True))
-            QTimer.singleShot(0, lambda: self._on_send_success(final_resp, btn, is_direct=False))
+                server_response = resp_data.decode('utf-8', errors='replace').strip() if resp_data else "Sent (no response)"
+                print(f"[DEBUG AI] Успех. Ответ сервера: {server_response}")
+            except Exception as sock_err:
+                self._log(f"[AI ERROR] Ошибка соединения с сервером: {sock_err}")
+                raise  # Пробрасываем исключение дальше для обработки
+            
+            # Разблокируем кнопку ПЕРЕД вызовом успеха
+            unlock_button()
+            QTimer.singleShot(0, lambda: self._on_send_success(server_response, btn, is_direct=False))
 
         except requests.exceptions.ConnectionError as ce:
             print(f"[DEBUG AI] ConnectionError: {ce}")
-            QTimer.singleShot(0, lambda: btn.setEnabled(True))
+            unlock_button()
             QTimer.singleShot(0, lambda: self._on_send_error("Ollama API недоступен. Запущен ли ollama serve?", btn))
         except requests.exceptions.Timeout as te:
             print(f"[DEBUG AI] Timeout: {te}")
-            QTimer.singleShot(0, lambda: btn.setEnabled(True))
+            unlock_button()
             QTimer.singleShot(0, lambda: self._on_send_error("Таймаут Ollama (60с). Модель слишком долго грузится в RAM.", btn))
         except Exception as e:
             print(f"[DEBUG AI] Неизвестная ошибка:\n{traceback.format_exc()}")
-            QTimer.singleShot(0, lambda: btn.setEnabled(True))
+            unlock_button()
             QTimer.singleShot(0, lambda: self._on_send_error(f"AI-поток: {e}", btn))
 
     def _on_send_success(self, response, btn, is_direct: bool):
@@ -884,11 +898,7 @@ class MainWindow(QWidget):
         self.delivery_status.setText(f"✅ Доставка успешна ({mode})")
         self.delivery_status.setProperty("class", "status-ok")
         self._refresh_style(self.delivery_status)
-        # Кнопка уже разблокирована в worker'е, здесь только для подстраховки
-        try:
-            btn.setEnabled(True)
-        except RuntimeError:
-            pass  # Кнопка могла быть уничтожена
+        # Кнопка уже разблокирована в worker'е, здесь не трогаем
         QTimer.singleShot(3000, self._reset_nodes)
 
     def _on_send_error(self, error, btn):
@@ -898,11 +908,7 @@ class MainWindow(QWidget):
         self.delivery_status.setText("❌ Ошибка соединения")
         self.delivery_status.setProperty("class", "status-error")
         self._refresh_style(self.delivery_status)
-        # Кнопка уже разблокирована в worker'е, здесь только для подстраховки
-        try:
-            btn.setEnabled(True)
-        except RuntimeError:
-            pass  # Кнопка могла быть уничтожена
+        # Кнопка уже разблокирована в worker'е, здесь не трогаем
         QTimer.singleShot(3000, self._reset_nodes)
 
     def _reset_nodes(self):
