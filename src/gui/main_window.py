@@ -506,6 +506,13 @@ class MainWindow(QWidget):
             # Убираем ```json ... ``` если ИИ его добавил
             if "```" in raw:
                 raw = raw.split("```")[-2] if raw.count("```") >= 2 else raw.replace("```", "")
+            
+            # Удаляем префиксы типа "json", "markdown" в начале строки (после очистки от ```)
+            raw = raw.strip()
+            if raw.lower().startswith("json"):
+                raw = raw[4:].strip()
+            elif raw.lower().startswith("markdown"):
+                raw = raw[8:].strip()
             raw = raw.strip()
 
             # DEBUG: Вывод сырого ответа для анализа проблемы
