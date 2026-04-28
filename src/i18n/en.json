@@ -1,0 +1,13 @@
+{
+  "ui": {
+    "app_title": "SignalFlow Controller",
+    "start_sim": "▶ Start Simulator",
+    "start_ai": "▶ Start AI Processor",
+    "emergency_stop": "🔴 EMERGENCY STOP",
+    "model_active": "🤖 Model: {model}",
+    "status_processing": "⚙️ Analyzing priority...",
+    "status_idle": "Idle",
+    "status_error": "⚠️ Connection failed",
+    "process_group": "Process Visualization"
+  }
+}

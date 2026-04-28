@@ -1,0 +1,13 @@
+{
+  "ui": {
+    "app_title": "信号流控制器",
+    "start_sim": "▶ 启动模拟器",
+    "start_ai": "▶ 启动AI处理",
+    "emergency_stop": "🔴 紧急停止",
+    "model_active": "🤖 模型: {model}",
+    "status_processing": "⚙️ 正在分析优先级...",
+    "status_idle": "空闲",
+    "status_error": "⚠️ 连接失败",
+    "process_group": "流程可视化"
+  }
+}

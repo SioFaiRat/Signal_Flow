@@ -1,0 +1,25 @@
+{
+  "network": {
+    "simulator_host": "127.0.0.1",
+    "simulator_port": 9999,
+    "timeout_sec": 5,
+    "max_retries": 3
+  },
+  "ai": {
+     "ollama_url": "http://localhost:11434/api/generate",
+     "default_model": "phi3:mini",
+     "fallback_mode": true,
+     "max_tokens": 512
+  },
+  "ui": {
+    "default_language": "ru",
+    "available_languages": ["ru", "en", "zh"],
+    "log_max_lines": 1000,
+    "theme": "loft_dark"
+  },
+  "paths": {
+    "core_dir": "src/core",
+    "log_dir": "logs",
+    "assets_dir": "assets"
+  }
+}
