@@ -3,17 +3,37 @@
 *.pyc
 __pycache__/
 
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-
-# Environment
+# Virtual environments
+venv/
+.venv/
 .env
-.env.local
-*.env.*
+*.env
 
-# Editors
+# Logs
+*.log
+
+# IDE/Editor files
 .vscode/
 .idea/
+*.swp
+*.swo
+*.tmp
+
+# Build/dist directories
+build/
+dist/
+target/
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# Python cache
+.pytest_cache/
+.mypy_cache/
+
+# System files
+.DS_Store
+Thumbs.db
 ```
