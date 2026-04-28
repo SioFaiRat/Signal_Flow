@@ -4,6 +4,7 @@ import socket
 import threading
 import platform
 import json
+import subprocess
 import requests
 from pathlib import Path
     
@@ -13,8 +14,9 @@ if sys.platform == "win32": # Принудительно устанавлива�
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
-                             QPushButton, QLabel, QComboBox, QPlainTextEdit, QFrame)
-from PyQt6.QtCore import Qt, QTimer
+                             QPushButton, QLabel, QComboBox, QPlainTextEdit, QFrame,
+                             QDialog, QTextEdit, QSplitter)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QFont
 
 # Предполагаем, что эти модули находятся в вашем проекте
@@ -40,12 +42,207 @@ except ImportError:
         process_started = Signal()
         process_stopped = Signal()
 
+class OllamaMonitor(QObject):
+    """Монитор состояния Ollama"""
+    status_changed = pyqtSignal(bool, str)  # is_running, message
+    
+    def __init__(self):
+        super().__init__()
+        self.is_running = False
+        self.process: subprocess.Popen | None = None
+        self._check_timer = QTimer()
+        self._check_timer.timeout.connect(self._check_status)
+        
+    def start_ollama(self, config_path: str = "config.json"):
+        """Запуск ollama serve"""
+        if self.is_running and self.process and self.process.poll() is None:
+            return False, "Ollama уже запущен"
+        
+        try:
+            # Запускаем ollama serve без окна консоли на Windows
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = subprocess.CREATE_NO_WINDOW
+            
+            self.process = subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                creationflags=creationflags
+            )
+            
+            # Поток для чтения логов
+            threading.Thread(target=self._read_ollama_logs, daemon=True).start()
+            
+            self.is_running = True
+            self.status_changed.emit(True, "Ollama запущен")
+            return True, "Ollama запущен успешно"
+        except FileNotFoundError:
+            return False, "Ollama не найден. Установите Ollama."
+        except Exception as e:
+            return False, f"Ошибка запуска: {e}"
+    
+    def stop_ollama(self):
+        """Остановка ollama"""
+        if self.process and self.process.poll() is None:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+            except Exception as e:
+                return False, f"Ошибка остановки: {e}"
+        
+        self.is_running = False
+        self.process = None
+        self.status_changed.emit(False, "Ollama остановлен")
+        return True, "Ollama остановлен"
+    
+    def _read_ollama_logs(self):
+        """Чтение логов Ollama в фоновом потоке"""
+        if self.process and self.process.stdout:
+            for line in iter(self.process.stdout.readline, ""):
+                if line:
+                    # Отправляем логи в главный поток через сигнал
+                    pass  # Можно добавить сигнал для логов
+    
+    def _check_status(self):
+        """Проверка доступности Ollama API"""
+        try:
+            import requests
+            response = requests.get("http://localhost:11434/api/tags", timeout=2)
+            if response.status_code == 200:
+                if not self.is_running:
+                    self.is_running = True
+                    self.status_changed.emit(True, "Ollama доступен")
+            else:
+                if self.is_running:
+                    self.is_running = False
+                    self.status_changed.emit(False, "Ollama недоступен")
+        except:
+            if self.is_running:
+                self.is_running = False
+                self.status_changed.emit(False, "Ollama недоступен")
+
+
+class DebugWindow(QDialog):
+    """Окно отладки для просмотра процессов и логов"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("🔍 Дебаг - Мониторинг процессов")
+        self.resize(800, 600)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint)
+        
+        layout = QVBoxLayout(self)
+        
+        # Статус процессов
+        status_group = QGroupBox("📊 Статус процессов")
+        status_layout = QVBoxLayout(status_group)
+        
+        self.ollama_status = QLabel("⚪ Ollama: Не проверялся")
+        self.ollama_status.setFont(QFont("Consolas", 11))
+        self.server_status = QLabel("⚪ TCP Сервер: Не проверялся")
+        self.server_status.setFont(QFont("Consolas", 11))
+        self.model_status = QLabel("⚪ Модель: Не проверялась")
+        self.model_status.setFont(QFont("Consolas", 11))
+        
+        status_layout.addWidget(self.ollama_status)
+        status_layout.addWidget(self.server_status)
+        status_layout.addWidget(self.model_status)
+        
+        layout.addWidget(status_group)
+        
+        # Логи
+        log_group = QGroupBox("📝 Логи событий")
+        log_layout = QVBoxLayout(log_group)
+        
+        self.debug_log = QTextEdit()
+        self.debug_log.setReadOnly(True)
+        self.debug_log.setFont(QFont("Consolas", 10))
+        self.debug_log.setMinimumHeight(300)
+        
+        log_layout.addWidget(self.debug_log)
+        layout.addWidget(log_group)
+        
+        # Кнопки
+        btn_layout = QHBoxLayout()
+        
+        self.refresh_btn = QPushButton("🔄 Обновить статус")
+        self.refresh_btn.clicked.connect(self._refresh_all_status)
+        self.clear_log_btn = QPushButton("🗑️ Очистить логи")
+        self.clear_log_btn.clicked.connect(lambda: self.debug_log.clear())
+        
+        btn_layout.addWidget(self.refresh_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.clear_log_btn)
+        
+        layout.addLayout(btn_layout)
+        
+        # Таймер автообновления
+        self.auto_refresh_timer = QTimer()
+        self.auto_refresh_timer.timeout.connect(self._refresh_all_status)
+        self.auto_refresh_timer.start(5000)  # Каждые 5 секунд
+        
+        self._log_event("Окно отладки открыто")
+        self._refresh_all_status()
+    
+    def _log_event(self, message: str):
+        """Добавление события в лог"""
+        timestamp = QTimer().property("current_time") or ""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.debug_log.append(f"[{timestamp}] {message}")
+    
+    def _refresh_all_status(self):
+        """Обновление статуса всех компонентов"""
+        # Проверка Ollama
+        try:
+            import requests
+            response = requests.get("http://localhost:11434/api/tags", timeout=2)
+            if response.status_code == 200:
+                models = response.json().get("models", [])
+                model_names = [m["name"] for m in models[:5]]
+                self.ollama_status.setText(f"🟢 Ollama: Работает (моделей: {len(models)})")
+                self.ollama_status.setStyleSheet("color: #4CAF50;")
+                if model_names:
+                    self.model_status.setText(f"🟢 Модель: Доступны {', '.join(model_names)}")
+                    self.model_status.setStyleSheet("color: #4CAF50;")
+                else:
+                    self.model_status.setText("🟡 Модель: Нет загруженных моделей")
+                    self.model_status.setStyleSheet("color: #FF9800;")
+            else:
+                raise Exception("API вернул ошибку")
+        except Exception as e:
+            self.ollama_status.setText(f"🔴 Ollama: Не доступен ({e})")
+            self.ollama_status.setStyleSheet("color: #F44336;")
+            self.model_status.setText("🔴 Модель: Ollama не работает")
+            self.model_status.setStyleSheet("color: #F44336;")
+        
+        # Проверка TCP сервера
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        result = sock.connect_ex(('127.0.0.1', 9999))
+        sock.close()
+        if result == 0:
+            self.server_status.setText("🟢 TCP Сервер: Порт 9999 открыт")
+            self.server_status.setStyleSheet("color: #4CAF50;")
+        else:
+            self.server_status.setText("🔴 TCP Сервер: Порт 9999 закрыт")
+            self.server_status.setStyleSheet("color: #F44336;")
+        
+        self._log_event("Статус процессов обновлён")
+
+
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.config = AppConfig()
         self.tr = Translator(self.config.get("ui", "default_language", default="ru"))
         self.process_mgr = ProcessManager()
+        self.ollama_monitor = OllamaMonitor()
+        self.debug_window: DebugWindow | None = None
         self._setup_ui()
         self._connect_signals()
 
@@ -65,7 +262,20 @@ class MainWindow(QWidget):
         self.lang_combo.currentTextChanged.connect(self._on_lang_change)
         top_bar.addWidget(QLabel("🌐"))
         top_bar.addWidget(self.lang_combo)
+        
+        # Кнопка запуска Ollama
+        self.ollama_btn = QPushButton("🦙 Запуск Ollama")
+        self.ollama_btn.clicked.connect(self._toggle_ollama)
+        self.ollama_status_label = QLabel("⚪ Ollama: Не активен")
+        self.ollama_status_label.setFont(QFont("Segoe UI", 10))
+        top_bar.addWidget(self.ollama_btn)
+        top_bar.addWidget(self.ollama_status_label)
+        
+        # Кнопка отладки
+        self.debug_btn = QPushButton("🔍 Дебаг")
+        self.debug_btn.clicked.connect(self._open_debug_window)
         top_bar.addStretch()
+        
         self.model_label = QLabel(self.tr.t("model_active", model=self.config.get("ai", "default_model", default="phi3:mini")))
         top_bar.addWidget(self.model_label)
         main_layout.addLayout(top_bar)
@@ -160,6 +370,41 @@ class MainWindow(QWidget):
         self.process_mgr.error_occurred.connect(lambda s, e: self._log(f"[❌ {s}] {e}"))
         self.process_mgr.process_started.connect(lambda n: self._update_node("node_ai", "active", "Обработка..."))
         self.process_mgr.process_stopped.connect(lambda n: self._update_node("node_ai", "idle", "Остановлен"))
+        
+        # Сигналы от монитора Ollama
+        self.ollama_monitor.status_changed.connect(self._on_ollama_status_changed)
+
+    def _toggle_ollama(self):
+        """Переключение состояния Ollama"""
+        if self.ollama_monitor.is_running:
+            success, msg = self.ollama_monitor.stop_ollama()
+        else:
+            success, msg = self.ollama_monitor.start_ollama()
+        
+        self._log(f"[Ollama] {msg}")
+        if not success:
+            self._log(f"[Ollama ERROR] {msg}")
+
+    def _on_ollama_status_changed(self, is_running: bool, message: str):
+        """Обновление статуса Ollama в UI"""
+        if is_running:
+            self.ollama_status_label.setText(f"🟢 {message}")
+            self.ollama_status_label.setStyleSheet("color: #4CAF50;")
+            self.ollama_btn.setText("🛑 Остановить Ollama")
+        else:
+            self.ollama_status_label.setText(f"⚪ {message}")
+            self.ollama_status_label.setStyleSheet("color: #F44336;")
+            self.ollama_btn.setText("🦙 Запуск Ollama")
+
+    def _open_debug_window(self):
+        """Открытие окна отладки"""
+        if self.debug_window is None or not self.debug_window.isVisible():
+            self.debug_window = DebugWindow(self)
+            # Перенаправляем логи из основного окна в дебаг
+            self.process_mgr.log_line.connect(lambda src, msg: self.debug_window._log_event(f"[{src}] {msg}") if self.debug_window else None)
+        self.debug_window.show()
+        self.debug_window.raise_()
+        self.debug_window.activateWindow()
 
     def _trigger_send(self, message: str, btn: QPushButton, use_ai: bool):
         if not message:
