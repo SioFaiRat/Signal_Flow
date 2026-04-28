@@ -9,6 +9,8 @@ import requests
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import webbrowser
     
 
 if sys.platform == "win32": # Принудительно устанавливаем UTF-8 для консоли Windows
@@ -45,21 +47,28 @@ except ImportError:
         process_stopped = Signal()
 
 class TestTCPServer:
-    """Встроенный тестовый TCP сервер для приема данных"""
+    """Встроенный тестовый TCP сервер для приема данных с веб-интерфейсом"""
     
-    def __init__(self, host: str = "127.0.0.1", port: int = 9998):
+    def __init__(self, host: str = "127.0.0.1", port: int = 9998, web_port: int = 8080):
         self.host = host
         self.port = port
+        self.web_port = web_port
         self._socket: Optional[socket.socket] = None
+        self._web_server: Optional[HTTPServer] = None
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._web_thread: Optional[threading.Thread] = None
         self._message_count = 0
         self._last_message: str = ""
         self._last_time: str = ""
+        self._received_data = []
+        self._lock = threading.Lock()
+        self._max_history = 100
         
     def start(self) -> bool:
         """Запуск сервера"""
         try:
+            # Запуск TCP сервера
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self._socket.bind((self.host, self.port))
@@ -69,7 +78,14 @@ class TestTCPServer:
             self._thread = threading.Thread(target=self._accept_connections, daemon=True)
             self._thread.start()
             
+            # Запуск Веб сервера
+            self._web_server = HTTPServer((self.host, self.web_port), WebHandler)
+            WebHandler.server_instance = self
+            self._web_thread = threading.Thread(target=self._web_server.serve_forever, daemon=True)
+            self._web_thread.start()
+            
             print(f"[+] Test Server started on {self.host}:{self.port}")
+            print(f"[+] Web Interface available at http://{self.host}:{self.web_port}")
             return True
         except Exception as e:
             print(f"[!] Test Server start error: {e}")
@@ -93,12 +109,25 @@ class TestTCPServer:
                 data = conn.recv(4096)
                 if data:
                     message = data.decode('utf-8', errors='replace').strip()
-                    self._message_count += 1
-                    self._last_message = message
-                    self._last_time = datetime.now().strftime('%H:%M:%S')
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Received ({self._message_count}): {message}")
+                    timestamp = datetime.now().strftime('%H:%M:%S')
                     
-                    response = f"OK: Received {self._message_count} messages"
+                    with self._lock:
+                        self._message_count += 1
+                        self._last_message = message
+                        self._last_time = timestamp
+                        
+                        entry = {
+                            "time": timestamp,
+                            "data": message,
+                            "source": f"{addr[0]}:{addr[1]}"
+                        }
+                        self._received_data.insert(0, entry)
+                        if len(self._received_data) > self._max_history:
+                            self._received_data.pop()
+                    
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Received ({self._message_count}): {message[:50]}...")
+                    
+                    response = f"OK: Received {self._message_count} messages at {timestamp}\n"
                     conn.send(response.encode('utf-8'))
             except Exception as e:
                 print(f"[!] Client error: {e}")
@@ -112,6 +141,12 @@ class TestTCPServer:
             except Exception:
                 pass
             self._socket = None
+        if self._web_server:
+            try:
+                self._web_server.shutdown()
+            except Exception:
+                pass
+        print("[-] Test Server stopped")
     
     @property
     def message_count(self) -> int:
@@ -128,6 +163,89 @@ class TestTCPServer:
     @property
     def is_running(self) -> bool:
         return self._running
+    
+    @property
+    def received_data(self):
+        with self._lock:
+            return list(self._received_data)
+
+
+class WebHandler(SimpleHTTPRequestHandler):
+    """Веб-обработчик для отображения полученных данных"""
+    server_instance: Optional[TestTCPServer] = None
+    
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            
+            html = self.generate_html()
+            self.wfile.write(html.encode('utf-8'))
+        elif self.path == '/api/data':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.end_headers()
+            
+            if self.server_instance:
+                data = json.dumps(self.server_instance.received_data, ensure_ascii=False)
+            else:
+                data = "[]"
+            self.wfile.write(data.encode('utf-8'))
+        else:
+            super().do_GET()
+    
+    def generate_html(self):
+        rows = ""
+        if self.server_instance:
+            for item in self.server_instance.received_data:
+                safe_data = item['data'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br>')
+                rows += f"""
+                <tr>
+                    <td>{item['time']}</td>
+                    <td>{item['source']}</td>
+                    <td style="font-family: monospace; white-space: pre-wrap;">{safe_data}</td>
+                </tr>
+                """
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="ru">
+        <head>
+            <meta charset="UTF-8">
+            <title>SignalFlow Monitor</title>
+            <meta http-equiv="refresh" content="2">
+            <style>
+                body {{ font-family: sans-serif; background: #f0f2f5; padding: 20px; }}
+                h1 {{ color: #333; }}
+                table {{ width: 100%; border-collapse: collapse; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }}
+                th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
+                th {{ background-color: #007bff; color: white; }}
+                tr:hover {{ background-color: #f1f1f1; }}
+                .status {{ color: green; font-weight: bold; }}
+                .empty {{ text-align: center; color: #888; padding: 20px; }}
+            </style>
+        </head>
+        <body>
+            <h1>📡 SignalFlow Monitor</h1>
+            <p>Статус сервера: <span class="status">● Активен</span> (Порт 9998)</p>
+            <p>Автообновление: 2 сек. <a href="/api/data" target="_blank">JSON API</a></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th width="10%">Время</th>
+                        <th width="20%">Источник</th>
+                        <th>Данные</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows if rows else '<tr><td colspan="3" class="empty">Ожидание данных...</td></tr>'}
+                </tbody>
+            </table>
+        </body>
+        </html>
+        """
+        return html
 
 
 class OllamaMonitor(QObject):
@@ -502,6 +620,14 @@ class MainWindow(QWidget):
                 self.test_server_status.setStyleSheet("color: #4CAF50;")
                 self.test_server_btn.setText("🛑 Остановить сервер")
                 self._log("[TestServer] Запущен на 127.0.0.1:9998")
+                self._log(f"[TestServer] Web-интерфейс: http://127.0.0.1:{self.test_server.web_port}")
+                
+                # Автоматически открываем браузер с веб-интерфейсом
+                try:
+                    webbrowser.open(f"http://127.0.0.1:{self.test_server.web_port}", new=2)
+                    self._log("[TestServer] Открыт веб-интерфейс в браузере")
+                except Exception as e:
+                    self._log(f"[TestServer] Не удалось открыть браузер: {e}")
             else:
                 self.test_server_btn.setChecked(False)
                 self.test_server_status.setText("🔴 Сервер: Ошибка запуска")
